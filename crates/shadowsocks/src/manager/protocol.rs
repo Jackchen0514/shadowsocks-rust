@@ -1,6 +1,6 @@
 //! Shadowsocks server manager protocol
 
-use std::{collections::HashMap, io, str, string::ToString};
+use std::{collections::HashMap, io, net::IpAddr, str, string::ToString};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -270,6 +270,59 @@ impl ManagerProtocol for StatRequest {
     }
 }
 
+/// `conn-stat` request
+#[derive(Debug, Clone)]
+pub struct ConnStatRequest;
+
+impl ManagerProtocol for ConnStatRequest {
+    fn from_bytes(buf: &[u8]) -> Result<Self, Error> {
+        let cmd = str::from_utf8(buf)?;
+        if cmd != "conn-stat" {
+            return Err(Error::UnrecognizedCommand(cmd.to_owned()));
+        }
+
+        Ok(Self)
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>, Error> {
+        Ok(b"conn-stat\n".to_vec())
+    }
+}
+
+/// Live connection statistic of one managed server
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ServerConnStat {
+    pub server_port: u16,
+    /// Current number of TCP connections being served
+    pub tcp_conn_count: usize,
+    /// Current number of UDP associations being kept
+    pub udp_assoc_count: usize,
+    /// Current number of distinct client IPs holding TCP connections
+    pub online_ip_count: usize,
+    /// Current distinct client IPs holding TCP connections
+    pub online_ips: Vec<IpAddr>,
+}
+
+/// `conn-stat` response
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(transparent)]
+pub struct ConnStatResponse {
+    pub servers: Vec<ServerConnStat>,
+}
+
+impl ManagerProtocol for ConnStatResponse {
+    fn from_bytes(buf: &[u8]) -> Result<Self, Error> {
+        let req = serde_json::from_slice(buf)?;
+        Ok(req)
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>, Error> {
+        let mut buf = serde_json::to_vec(self)?;
+        buf.push(b'\n');
+        Ok(buf)
+    }
+}
+
 /// Server's error message
 #[derive(Debug, Clone)]
 pub struct ErrorResponse<E: ToString>(pub E);
@@ -294,6 +347,7 @@ pub enum ManagerRequest {
     List(ListRequest),
     Ping(PingRequest),
     Stat(StatRequest),
+    ConnStat(ConnStatRequest),
 }
 
 impl ManagerRequest {
@@ -305,6 +359,7 @@ impl ManagerRequest {
             Self::List(..) => "list",
             Self::Ping(..) => "ping",
             Self::Stat(..) => "stat",
+            Self::ConnStat(..) => "conn-stat",
         }
     }
 }
@@ -317,6 +372,7 @@ impl ManagerProtocol for ManagerRequest {
             Self::List(ref req) => req.to_bytes(),
             Self::Ping(ref req) => req.to_bytes(),
             Self::Stat(ref req) => req.to_bytes(),
+            Self::ConnStat(ref req) => req.to_bytes(),
         }
     }
 
@@ -350,6 +406,12 @@ impl ManagerProtocol for ManagerRequest {
                     return Err(Error::RedundantParameter);
                 }
                 Ok(Self::Ping(PingRequest))
+            }
+            "conn-stat" => {
+                if nsplit.next().is_some() {
+                    return Err(Error::RedundantParameter);
+                }
+                Ok(Self::ConnStat(ConnStatRequest))
             }
             "stat" => match nsplit.next() {
                 None => Err(Error::MissingParameter),

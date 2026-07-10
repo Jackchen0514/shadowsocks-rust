@@ -15,8 +15,8 @@ use shadowsocks::{
     manager::{
         datagram::ManagerSocketAddr,
         protocol::{
-            self, AddRequest, AddResponse, ErrorResponse, ListResponse, ManagerRequest, PingResponse, RemoveRequest,
-            RemoveResponse, ServerUserConfig, StatRequest,
+            self, AddRequest, AddResponse, ConnStatResponse, ErrorResponse, ListResponse, ManagerRequest,
+            PingResponse, RemoveRequest, RemoveResponse, ServerConnStat, ServerUserConfig, StatRequest,
         },
     },
     net::{AcceptOpts, ConnectOpts},
@@ -28,13 +28,15 @@ use crate::{
     acl::AccessControl,
     config::{ManagerConfig, ManagerServerHost, ManagerServerMode, SecurityConfig},
     net::FlowStat,
-    server::ServerBuilder,
+    server::{ServerBuilder, TcpServerStat, UdpServerStat},
 };
 
 enum ServerInstanceMode {
     Builtin {
         flow_stat: Arc<FlowStat>,
         abortable: JoinHandle<io::Result<()>>,
+        tcp_stat: Option<TcpServerStat>,
+        udp_stat: Option<UdpServerStat>,
     },
 
     #[cfg(unix)]
@@ -233,6 +235,10 @@ impl Manager {
                     let _ = self.listener.send_to(&rsp, &peer_addr).await;
                 }
                 ManagerRequest::Stat(ref stat) => self.handle_stat(stat).await,
+                ManagerRequest::ConnStat(..) => {
+                    let rsp = self.handle_conn_stat().await;
+                    let _ = self.listener.send_to(&rsp, &peer_addr).await;
+                }
             }
         }
     }
@@ -322,12 +328,20 @@ impl Manager {
             }
         };
 
+        let tcp_stat = server.tcp_stat();
+        let udp_stat = server.udp_stat();
+
         let abortable = tokio::spawn(async move { server.run().await });
 
         servers.insert(
             server_port,
             ServerInstance {
-                mode: ServerInstanceMode::Builtin { flow_stat, abortable },
+                mode: ServerInstanceMode::Builtin {
+                    flow_stat,
+                    abortable,
+                    tcp_stat,
+                    udp_stat,
+                },
                 svr_cfg,
                 tcp_max_connections,
                 udp_max_associations,
@@ -678,6 +692,39 @@ impl Manager {
         }
 
         PingResponse { stat }
+    }
+
+    async fn handle_conn_stat(&self) -> ConnStatResponse {
+        let instances = self.servers.lock().await;
+
+        let mut servers = Vec::with_capacity(instances.len());
+        for (port, server) in instances.iter() {
+            let (tcp_conn_count, udp_assoc_count, online_ips) = match server.mode {
+                ServerInstanceMode::Builtin {
+                    ref tcp_stat,
+                    ref udp_stat,
+                    ..
+                } => (
+                    tcp_stat.as_ref().map_or(0, TcpServerStat::conn_count),
+                    udp_stat.as_ref().map_or(0, UdpServerStat::assoc_count),
+                    tcp_stat.as_ref().map_or_else(Vec::new, TcpServerStat::online_ips),
+                ),
+                // Standalone servers run in a separate process; live in-process counters
+                // aren't available to the manager, only periodic flow `stat` reports are.
+                #[cfg(unix)]
+                ServerInstanceMode::Standalone { .. } => (0, 0, Vec::new()),
+            };
+
+            servers.push(ServerConnStat {
+                server_port: *port,
+                tcp_conn_count,
+                udp_assoc_count,
+                online_ip_count: online_ips.len(),
+                online_ips,
+            });
+        }
+
+        ConnStatResponse { servers }
     }
 
     #[cfg(not(unix))]

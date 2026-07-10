@@ -8,8 +8,8 @@ use super::{
     datagram::ManagerDatagram,
     error::Error,
     protocol::{
-        AddRequest, AddResponse, ListRequest, ListResponse, ManagerProtocol, PingRequest, PingResponse, RemoveRequest,
-        RemoveResponse, StatRequest,
+        AddRequest, AddResponse, ConnStatRequest, ConnStatResponse, ListRequest, ListResponse, ManagerProtocol,
+        PingRequest, PingResponse, RemoveRequest, RemoveResponse, StatRequest,
     },
 };
 
@@ -35,6 +35,8 @@ impl ManagerClient {
     impl_command!(ping, PingRequest, PingResponse);
 
     impl_command!(remove, RemoveRequest, RemoveResponse);
+
+    impl_command!(conn_stat, ConnStatRequest, ConnStatResponse);
 
     /// Create a `ManagerDatagram` for sending data to manager
     pub async fn connect(

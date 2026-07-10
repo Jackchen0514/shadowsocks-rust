@@ -498,8 +498,11 @@ Supported [Manage Multiple Users](https://github.com/shadowsocks/shadowsocks/wik
 - `remove` - Deletes an existing server instance
 - `list` - Lists all current running servers
 - `ping` - Lists all servers' statistic data
+- `conn-stat` - Lists all servers' live TCP connection count, UDP association count, and distinct online client IPs
 
 NOTE: `stat` command is not supported. Because servers are running in the same process with the manager itself.
+
+NOTE: `conn-stat` only reports live numbers for servers running in `Builtin` mode (in-process). Servers running in `Standalone` mode (separate `ssserver` subprocess) will always report zero counts, since the manager has no access to that process's in-memory state.
 
 ```bash
 # Start it just with --manager-address command line parameter
@@ -522,6 +525,10 @@ echo 'add: {"server_port":8388,"password":"hello-kitty","tcp_max_connections":10
 
 # Close one server by unix socket
 echo 'remove: {"server_port":8388}' | nc -Uu '/tmp/shadowsocks-manager.sock'
+
+# Query live TCP/UDP connection counts and online IPs for all managed servers
+echo 'conn-stat' | nc -u '127.0.0.1' '6100'
+# -> [{"server_port":8388,"tcp_conn_count":3,"udp_assoc_count":1,"online_ip_count":2,"online_ips":["127.0.0.1","192.168.1.5"]}]
 ```
 
 For manager UI, check more details in the [shadowsocks-manager](https://github.com/shadowsocks/shadowsocks-manager) project.

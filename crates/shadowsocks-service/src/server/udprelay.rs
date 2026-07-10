@@ -1,6 +1,15 @@
 //! Shadowsocks UDP server
 
-use std::{cell::RefCell, io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell,
+    io,
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use bytes::Bytes;
 use futures::future;
@@ -84,6 +93,20 @@ pub struct UdpServer {
     time_to_live: Duration,
     listener: Arc<MonProxySocket<InboundUdpSocket>>,
     svr_cfg: ServerConfig,
+    assoc_count: Arc<AtomicUsize>,
+}
+
+/// A cloneable handle for querying a `UdpServer`'s live association statistics
+#[derive(Clone)]
+pub struct UdpServerStat {
+    assoc_count: Arc<AtomicUsize>,
+}
+
+impl UdpServerStat {
+    /// Current number of UDP associations being kept
+    pub fn assoc_count(&self) -> usize {
+        self.assoc_count.load(Ordering::Relaxed)
+    }
 }
 
 impl UdpServer {
@@ -130,6 +153,7 @@ impl UdpServer {
             time_to_live,
             listener,
             svr_cfg,
+            assoc_count: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -141,6 +165,13 @@ impl UdpServer {
     /// Server's listen address
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.listener.get_ref().local_addr()
+    }
+
+    /// Get a cloneable handle for querying live association statistics
+    pub fn stat(&self) -> UdpServerStat {
+        UdpServerStat {
+            assoc_count: self.assoc_count.clone(),
+        }
     }
 
     /// Start server's accept loop
@@ -328,6 +359,7 @@ impl UdpServer {
                     listener.clone(),
                     peer_addr,
                     self.keepalive_tx.clone(),
+                    self.assoc_count.clone(),
                 );
 
                 debug!("created udp association for {}", peer_addr);
@@ -357,6 +389,7 @@ impl UdpServer {
                     peer_addr,
                     self.keepalive_tx.clone(),
                     client_session_id,
+                    self.assoc_count.clone(),
                 );
 
                 debug!(
@@ -378,11 +411,13 @@ type UdpAssociationSendMessage = (SocketAddr, Address, Bytes, Option<UdpSocketCo
 struct UdpAssociation {
     assoc_handle: JoinHandle<()>,
     sender: mpsc::Sender<UdpAssociationSendMessage>,
+    assoc_count: Arc<AtomicUsize>,
 }
 
 impl Drop for UdpAssociation {
     fn drop(&mut self) {
         self.assoc_handle.abort();
+        self.assoc_count.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -392,9 +427,15 @@ impl UdpAssociation {
         inbound: Arc<MonProxySocket<InboundUdpSocket>>,
         peer_addr: SocketAddr,
         keepalive_tx: mpsc::Sender<NatKey>,
+        assoc_count: Arc<AtomicUsize>,
     ) -> Self {
         let (assoc_handle, sender) = UdpAssociationContext::create(context, inbound, peer_addr, keepalive_tx, None);
-        Self { assoc_handle, sender }
+        assoc_count.fetch_add(1, Ordering::Relaxed);
+        Self {
+            assoc_handle,
+            sender,
+            assoc_count,
+        }
     }
 
     #[cfg(feature = "aead-cipher-2022")]
@@ -404,10 +445,16 @@ impl UdpAssociation {
         peer_addr: SocketAddr,
         keepalive_tx: mpsc::Sender<NatKey>,
         client_session_id: u64,
+        assoc_count: Arc<AtomicUsize>,
     ) -> Self {
         let (assoc_handle, sender) =
             UdpAssociationContext::create(context, inbound, peer_addr, keepalive_tx, Some(client_session_id));
-        Self { assoc_handle, sender }
+        assoc_count.fetch_add(1, Ordering::Relaxed);
+        Self {
+            assoc_handle,
+            sender,
+            assoc_count,
+        }
     }
 
     fn try_send(&self, data: UdpAssociationSendMessage) -> io::Result<()> {

@@ -15,7 +15,11 @@ use tokio::time;
 
 use crate::{acl::AccessControl, config::SecurityConfig, net::FlowStat, utils::ServerHandle};
 
-use super::{context::ServiceContext, tcprelay::TcpServer, udprelay::UdpServer};
+use super::{
+    context::ServiceContext,
+    tcprelay::{TcpServer, TcpServerStat},
+    udprelay::{UdpServer, UdpServerStat},
+};
 
 /// Shadowsocks Server Builder
 pub struct ServerBuilder {
@@ -196,6 +200,16 @@ impl Server {
     /// Get UDP server instance
     pub fn udp_server(&self) -> Option<&UdpServer> {
         self.udp_server.as_ref()
+    }
+
+    /// Get a handle for querying live TCP connection statistics
+    pub fn tcp_stat(&self) -> Option<TcpServerStat> {
+        self.tcp_server.as_ref().map(TcpServer::stat)
+    }
+
+    /// Get a handle for querying live UDP association statistics
+    pub fn udp_stat(&self) -> Option<UdpServerStat> {
+        self.udp_server.as_ref().map(UdpServer::stat)
     }
 
     /// Start serving

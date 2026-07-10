@@ -44,25 +44,41 @@ pub struct TcpServer {
 
 /// Releases a served connection's reserved slots (connection count / online IP) when it ends
 struct ConnectionGuard {
-    conn_count: Option<Arc<AtomicUsize>>,
-    online_ip: Option<(OnlineIpMap, IpAddr)>,
+    conn_count: Arc<AtomicUsize>,
+    online_ips: OnlineIpMap,
+    peer_ip: IpAddr,
 }
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        if let Some(ref conn_count) = self.conn_count {
-            conn_count.fetch_sub(1, Ordering::Relaxed);
-        }
+        self.conn_count.fetch_sub(1, Ordering::Relaxed);
 
-        if let Some((ref online_ips, ip)) = self.online_ip {
-            let mut online_ips = online_ips.lock().expect("online_ips lock poisoned");
-            if let Some(count) = online_ips.get_mut(&ip) {
-                *count -= 1;
-                if *count == 0 {
-                    online_ips.remove(&ip);
-                }
+        let mut online_ips = self.online_ips.lock().expect("online_ips lock poisoned");
+        if let Some(count) = online_ips.get_mut(&self.peer_ip) {
+            *count -= 1;
+            if *count == 0 {
+                online_ips.remove(&self.peer_ip);
             }
         }
+    }
+}
+
+/// A cloneable handle for querying a `TcpServer`'s live connection statistics
+#[derive(Clone)]
+pub struct TcpServerStat {
+    conn_count: Arc<AtomicUsize>,
+    online_ips: OnlineIpMap,
+}
+
+impl TcpServerStat {
+    /// Current number of TCP connections being served
+    pub fn conn_count(&self) -> usize {
+        self.conn_count.load(Ordering::Relaxed)
+    }
+
+    /// Current distinct client IPs holding at least one TCP connection
+    pub fn online_ips(&self) -> Vec<IpAddr> {
+        self.online_ips.lock().expect("online_ips lock poisoned").keys().copied().collect()
     }
 }
 
@@ -96,6 +112,14 @@ impl TcpServer {
         self.listener.local_addr()
     }
 
+    /// Get a cloneable handle for querying live connection statistics
+    pub fn stat(&self) -> TcpServerStat {
+        TcpServerStat {
+            conn_count: self.conn_count.clone(),
+            online_ips: self.online_ips.clone(),
+        }
+    }
+
     /// Start server's accept loop
     pub async fn run(self) -> io::Result<()> {
         info!(
@@ -125,8 +149,9 @@ impl TcpServer {
                 continue;
             }
 
+            let prev_conn_count = self.conn_count.fetch_add(1, Ordering::Relaxed);
             if let Some(max_connections) = self.max_connections {
-                if self.conn_count.fetch_add(1, Ordering::Relaxed) >= max_connections {
+                if prev_conn_count >= max_connections {
                     self.conn_count.fetch_sub(1, Ordering::Relaxed);
                     debug!(
                         "max TCP connections ({}) reached, rejecting connection from {}",
@@ -136,29 +161,26 @@ impl TcpServer {
                 }
             }
 
-            let mut online_ip_registered = false;
-            if let Some(max_online_ips) = self.max_online_ips {
-                let peer_ip = peer_addr.ip();
+            let peer_ip = peer_addr.ip();
+            {
                 let mut online_ips = self.online_ips.lock().expect("online_ips lock poisoned");
                 match online_ips.get_mut(&peer_ip) {
                     Some(count) => {
                         *count += 1;
-                        online_ip_registered = true;
                     }
                     None => {
-                        if online_ips.len() >= max_online_ips {
-                            drop(online_ips);
-                            if self.max_connections.is_some() {
+                        if let Some(max_online_ips) = self.max_online_ips {
+                            if online_ips.len() >= max_online_ips {
+                                drop(online_ips);
                                 self.conn_count.fetch_sub(1, Ordering::Relaxed);
+                                debug!(
+                                    "max online IPs ({}) reached, rejecting new IP {}",
+                                    max_online_ips, peer_ip
+                                );
+                                continue;
                             }
-                            debug!(
-                                "max online IPs ({}) reached, rejecting new IP {}",
-                                max_online_ips, peer_ip
-                            );
-                            continue;
                         }
                         online_ips.insert(peer_ip, 1);
-                        online_ip_registered = true;
                     }
                 }
             }
@@ -172,8 +194,9 @@ impl TcpServer {
             };
 
             let guard = ConnectionGuard {
-                conn_count: self.max_connections.map(|_| self.conn_count.clone()),
-                online_ip: online_ip_registered.then(|| (self.online_ips.clone(), peer_addr.ip())),
+                conn_count: self.conn_count.clone(),
+                online_ips: self.online_ips.clone(),
+                peer_ip,
             };
 
             tokio::spawn(async move {

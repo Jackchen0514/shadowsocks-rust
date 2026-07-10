@@ -14,8 +14,8 @@ use crate::{
 
 pub use self::{
     server::{Server, ServerBuilder},
-    tcprelay::TcpServer,
-    udprelay::UdpServer,
+    tcprelay::{TcpServer, TcpServerStat},
+    udprelay::{UdpServer, UdpServerStat},
 };
 
 pub mod context;
