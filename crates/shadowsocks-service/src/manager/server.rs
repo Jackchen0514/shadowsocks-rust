@@ -44,6 +44,9 @@ enum ServerInstanceMode {
 struct ServerInstance {
     mode: ServerInstanceMode,
     svr_cfg: ServerConfig,
+    tcp_max_connections: Option<usize>,
+    udp_max_associations: Option<usize>,
+    max_online_ips: Option<usize>,
 }
 
 impl Drop for ServerInstance {
@@ -235,15 +238,33 @@ impl Manager {
     }
 
     /// Add a server programmatically
-    pub async fn add_server(&self, svr_cfg: ServerConfig) {
+    pub async fn add_server(
+        &self,
+        svr_cfg: ServerConfig,
+        tcp_max_connections: Option<usize>,
+        udp_max_associations: Option<usize>,
+        max_online_ips: Option<usize>,
+    ) {
         match self.svr_cfg.server_mode {
-            ManagerServerMode::Builtin => self.add_server_builtin(svr_cfg).await,
+            ManagerServerMode::Builtin => {
+                self.add_server_builtin(svr_cfg, tcp_max_connections, udp_max_associations, max_online_ips)
+                    .await
+            }
             #[cfg(unix)]
-            ManagerServerMode::Standalone => self.add_server_standalone(svr_cfg).await,
+            ManagerServerMode::Standalone => {
+                self.add_server_standalone(svr_cfg, tcp_max_connections, udp_max_associations, max_online_ips)
+                    .await
+            }
         }
     }
 
-    async fn add_server_builtin(&self, svr_cfg: ServerConfig) {
+    async fn add_server_builtin(
+        &self,
+        svr_cfg: ServerConfig,
+        tcp_max_connections: Option<usize>,
+        udp_max_associations: Option<usize>,
+        max_online_ips: Option<usize>,
+    ) {
         // Each server should use a separate Context, but shares
         //
         // * AccessControlList
@@ -258,8 +279,16 @@ impl Manager {
             server_builder.set_udp_expiry_duration(d);
         }
 
-        if let Some(c) = self.udp_capacity {
+        if let Some(c) = udp_max_associations.or(self.udp_capacity) {
             server_builder.set_udp_capacity(c);
+        }
+
+        if let Some(c) = tcp_max_connections {
+            server_builder.set_tcp_max_connections(c);
+        }
+
+        if let Some(c) = max_online_ips {
+            server_builder.set_max_online_ips(c);
         }
 
         if let Some(ref acl) = self.acl {
@@ -300,6 +329,9 @@ impl Manager {
             ServerInstance {
                 mode: ServerInstanceMode::Builtin { flow_stat, abortable },
                 svr_cfg,
+                tcp_max_connections,
+                udp_max_associations,
+                max_online_ips,
             },
         );
     }
@@ -355,7 +387,13 @@ impl Manager {
     }
 
     #[cfg(unix)]
-    async fn add_server_standalone(&self, svr_cfg: ServerConfig) {
+    async fn add_server_standalone(
+        &self,
+        svr_cfg: ServerConfig,
+        tcp_max_connections: Option<usize>,
+        udp_max_associations: Option<usize>,
+        max_online_ips: Option<usize>,
+    ) {
         use std::{
             fs::{self, OpenOptions},
             io::Write,
@@ -382,6 +420,8 @@ impl Manager {
         let config_file_path = self.server_config_path(port);
         let pid_path = self.server_pid_path(port);
 
+        let udp_max_associations = udp_max_associations.or(self.udp_capacity);
+
         let server_instance = ServerInstanceConfig {
             config: svr_cfg.clone(),
             acl: None, // Set with --acl command line argument
@@ -392,9 +432,9 @@ impl Manager {
             outbound_bind_addr: None,
             outbound_bind_interface: None,
             outbound_udp_allow_fragmentation: None,
-            tcp_max_connections: None,
-            udp_max_associations: None,
-            max_online_ips: None,
+            tcp_max_connections,
+            udp_max_associations,
+            max_online_ips,
         };
 
         let mut config = Config::new(ConfigType::Server);
@@ -460,6 +500,9 @@ impl Manager {
             ServerInstance {
                 mode: ServerInstanceMode::Standalone { flow_stat: 0 },
                 svr_cfg,
+                tcp_max_connections,
+                udp_max_associations,
+                max_online_ips,
             },
         );
     }
@@ -566,7 +609,8 @@ impl Manager {
             svr_cfg.set_user_manager(user_manager);
         }
 
-        self.add_server(svr_cfg).await;
+        self.add_server(svr_cfg, req.tcp_max_connections, req.udp_max_associations, req.max_online_ips)
+            .await;
 
         Ok(AddResponse("ok".to_owned()))
     }
@@ -615,6 +659,9 @@ impl Manager {
                 plugin_mode: None,
                 mode: None,
                 users,
+                tcp_max_connections: server.tcp_max_connections,
+                udp_max_associations: server.udp_max_associations,
+                max_online_ips: server.max_online_ips,
             };
             servers.push(sc);
         }
@@ -700,11 +747,18 @@ impl Manager {
                                 continue;
                             }
 
-                            let svr_cfg = config.server[0].config.clone();
+                            let svr_inst = &config.server[0];
+                            let svr_cfg = svr_inst.config.clone();
+                            let tcp_max_connections = svr_inst.tcp_max_connections;
+                            let udp_max_associations = svr_inst.udp_max_associations;
+                            let max_online_ips = svr_inst.max_online_ips;
 
                             vac.insert(ServerInstance {
                                 mode: ServerInstanceMode::Standalone { flow_stat: *flow },
                                 svr_cfg,
+                                tcp_max_connections,
+                                udp_max_associations,
+                                max_online_ips,
                             });
                         }
                     }

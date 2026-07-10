@@ -516,6 +516,10 @@ ssmanager -c /path/to/shadowsocks.json
 # Create one server by UDP
 echo 'add: {"server_port":8388,"password":"hello-kitty"}' | nc -u '127.0.0.1' '6100'
 
+# `add` also accepts per-server connection limits, same semantics as the static config fields
+# tcp_max_connections / udp_max_associations / max_online_ips (see below)
+echo 'add: {"server_port":8388,"password":"hello-kitty","tcp_max_connections":100,"max_online_ips":50}' | nc -u '127.0.0.1' '6100'
+
 # Close one server by unix socket
 echo 'remove: {"server_port":8388}' | nc -Uu '/tmp/shadowsocks-manager.sock'
 ```

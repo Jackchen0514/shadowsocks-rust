@@ -37,6 +37,16 @@ pub struct ServerConfig {
     pub mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub users: Option<Vec<ServerUserConfig>>,
+
+    /// Maximum number of concurrent TCP connections this server will accept, unlimited by default
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tcp_max_connections: Option<usize>,
+    /// Maximum number of UDP associations this server will keep, overrides the manager's global setting
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub udp_max_associations: Option<usize>,
+    /// Maximum number of distinct client IPs allowed to hold TCP connections concurrently, unlimited by default
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_online_ips: Option<usize>,
 }
 
 /// `add` request

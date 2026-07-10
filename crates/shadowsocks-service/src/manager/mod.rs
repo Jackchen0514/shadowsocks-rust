@@ -94,7 +94,14 @@ pub async fn run(config: Config) -> io::Result<()> {
     let manager = manager_builder.build().await?;
 
     for svr_inst in config.server {
-        manager.add_server(svr_inst.config).await;
+        manager
+            .add_server(
+                svr_inst.config,
+                svr_inst.tcp_max_connections,
+                svr_inst.udp_max_associations,
+                svr_inst.max_online_ips,
+            )
+            .await;
     }
 
     manager.run().await
