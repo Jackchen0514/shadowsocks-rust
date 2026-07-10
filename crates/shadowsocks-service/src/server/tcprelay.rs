@@ -4,7 +4,10 @@ use std::{
     future::Future,
     io::{self, ErrorKind},
     net::SocketAddr,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -30,6 +33,17 @@ pub struct TcpServer {
     context: Arc<ServiceContext>,
     svr_cfg: ServerConfig,
     listener: ProxyListener,
+    max_connections: Option<usize>,
+    conn_count: Arc<AtomicUsize>,
+}
+
+/// Decrements the shared connection counter when a served connection ends
+struct ConnectionCountGuard(Arc<AtomicUsize>);
+
+impl Drop for ConnectionCountGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl TcpServer {
@@ -37,12 +51,15 @@ impl TcpServer {
         context: Arc<ServiceContext>,
         svr_cfg: ServerConfig,
         accept_opts: AcceptOpts,
+        max_connections: Option<usize>,
     ) -> io::Result<Self> {
         let listener = ProxyListener::bind_with_opts(context.context(), &svr_cfg, accept_opts).await?;
         Ok(Self {
             context,
             svr_cfg,
             listener,
+            max_connections,
+            conn_count: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -85,6 +102,17 @@ impl TcpServer {
                 continue;
             }
 
+            if let Some(max_connections) = self.max_connections {
+                if self.conn_count.fetch_add(1, Ordering::Relaxed) >= max_connections {
+                    self.conn_count.fetch_sub(1, Ordering::Relaxed);
+                    debug!(
+                        "max TCP connections ({}) reached, rejecting connection from {}",
+                        max_connections, peer_addr
+                    );
+                    continue;
+                }
+            }
+
             let client = TcpServerClient {
                 context: self.context.clone(),
                 method: self.svr_cfg.method(),
@@ -93,7 +121,10 @@ impl TcpServer {
                 timeout: self.svr_cfg.timeout(),
             };
 
+            let count_guard = self.max_connections.map(|_| ConnectionCountGuard(self.conn_count.clone()));
+
             tokio::spawn(async move {
+                let _count_guard = count_guard;
                 if let Err(err) = client.serve().await {
                     debug!("tcp server stream aborted with error: {}", err);
                 }

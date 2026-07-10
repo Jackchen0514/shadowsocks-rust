@@ -392,6 +392,8 @@ impl Manager {
             outbound_bind_addr: None,
             outbound_bind_interface: None,
             outbound_udp_allow_fragmentation: None,
+            tcp_max_connections: None,
+            udp_max_associations: None,
         };
 
         let mut config = Config::new(ConfigType::Server);

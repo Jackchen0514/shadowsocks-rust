@@ -393,6 +393,11 @@ struct SSServerExtConfig {
     udp_weight: Option<f32>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    tcp_max_connections: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    udp_max_associations: Option<usize>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     acl: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1256,6 +1261,10 @@ pub struct ServerInstanceConfig {
     pub outbound_bind_addr: Option<IpAddr>,
     pub outbound_bind_interface: Option<String>,
     pub outbound_udp_allow_fragmentation: Option<bool>,
+    /// Maximum number of concurrent TCP connections this server instance will accept, unlimited by default
+    pub tcp_max_connections: Option<usize>,
+    /// Maximum number of UDP associations this server instance will keep, overrides the global `udp_max_associations`
+    pub udp_max_associations: Option<usize>,
 }
 
 impl ServerInstanceConfig {
@@ -1271,6 +1280,8 @@ impl ServerInstanceConfig {
             outbound_bind_addr: None,
             outbound_bind_interface: None,
             outbound_udp_allow_fragmentation: None,
+            tcp_max_connections: None,
+            udp_max_associations: None,
         }
     }
 }
@@ -2195,6 +2206,14 @@ impl Config {
                     server_instance.acl = Some(acl);
                 }
 
+                if let Some(tcp_max_connections) = svr.tcp_max_connections {
+                    server_instance.tcp_max_connections = Some(tcp_max_connections);
+                }
+
+                if let Some(udp_max_associations) = svr.udp_max_associations {
+                    server_instance.udp_max_associations = Some(udp_max_associations);
+                }
+
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 if let Some(outbound_fwmark) = svr.outbound_fwmark {
                     server_instance.outbound_fwmark = Some(outbound_fwmark);
@@ -3028,6 +3047,8 @@ impl fmt::Display for Config {
                         } else {
                             None
                         },
+                        tcp_max_connections: inst.tcp_max_connections,
+                        udp_max_associations: inst.udp_max_associations,
                         acl: inst
                             .acl
                             .as_ref()

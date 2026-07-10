@@ -730,6 +730,15 @@ Example configuration:
 
             // OPTIONAL. Instance specific ACL
             "acl": "/path/to/acl/file.acl",
+
+            // OPTIONAL. SERVER only.
+            // Limits how many concurrent TCP connections this node will accept.
+            // New connections beyond this number are rejected. Unlimited by default.
+            "tcp_max_connections": 100,
+            // OPTIONAL. SERVER only.
+            // Limits how many UDP associations this node will keep.
+            // Overrides the global "udp_max_associations" for this node only.
+            "udp_max_associations": 100,
         },
         {
             // Same key as basic format "server" and "server_port"

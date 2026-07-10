@@ -144,11 +144,14 @@ pub async fn run(config: Config) -> io::Result<()> {
         server_builder.set_connect_opts(connect_opts);
         server_builder.set_accept_opts(accept_opts);
 
-        if let Some(c) = config.udp_max_associations {
+        if let Some(c) = inst.udp_max_associations.or(config.udp_max_associations) {
             server_builder.set_udp_capacity(c);
         }
         if let Some(d) = config.udp_timeout {
             server_builder.set_udp_expiry_duration(d);
+        }
+        if let Some(c) = inst.tcp_max_connections {
+            server_builder.set_tcp_max_connections(c);
         }
         if let Some(ref m) = config.manager {
             server_builder.set_manager_addr(m.addr.clone());
