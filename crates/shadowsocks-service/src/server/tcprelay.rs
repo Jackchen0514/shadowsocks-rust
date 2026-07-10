@@ -1,11 +1,12 @@
 //! Shadowsocks TCP server
 
 use std::{
+    collections::HashMap,
     future::Future,
     io::{self, ErrorKind},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
@@ -28,6 +29,8 @@ use crate::net::{MonProxyStream, utils::ignore_until_end};
 
 use super::context::ServiceContext;
 
+type OnlineIpMap = Arc<Mutex<HashMap<IpAddr, usize>>>;
+
 /// TCP server instance
 pub struct TcpServer {
     context: Arc<ServiceContext>,
@@ -35,14 +38,31 @@ pub struct TcpServer {
     listener: ProxyListener,
     max_connections: Option<usize>,
     conn_count: Arc<AtomicUsize>,
+    max_online_ips: Option<usize>,
+    online_ips: OnlineIpMap,
 }
 
-/// Decrements the shared connection counter when a served connection ends
-struct ConnectionCountGuard(Arc<AtomicUsize>);
+/// Releases a served connection's reserved slots (connection count / online IP) when it ends
+struct ConnectionGuard {
+    conn_count: Option<Arc<AtomicUsize>>,
+    online_ip: Option<(OnlineIpMap, IpAddr)>,
+}
 
-impl Drop for ConnectionCountGuard {
+impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
+        if let Some(ref conn_count) = self.conn_count {
+            conn_count.fetch_sub(1, Ordering::Relaxed);
+        }
+
+        if let Some((ref online_ips, ip)) = self.online_ip {
+            let mut online_ips = online_ips.lock().expect("online_ips lock poisoned");
+            if let Some(count) = online_ips.get_mut(&ip) {
+                *count -= 1;
+                if *count == 0 {
+                    online_ips.remove(&ip);
+                }
+            }
+        }
     }
 }
 
@@ -52,6 +72,7 @@ impl TcpServer {
         svr_cfg: ServerConfig,
         accept_opts: AcceptOpts,
         max_connections: Option<usize>,
+        max_online_ips: Option<usize>,
     ) -> io::Result<Self> {
         let listener = ProxyListener::bind_with_opts(context.context(), &svr_cfg, accept_opts).await?;
         Ok(Self {
@@ -60,6 +81,8 @@ impl TcpServer {
             listener,
             max_connections,
             conn_count: Arc::new(AtomicUsize::new(0)),
+            max_online_ips,
+            online_ips: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -113,6 +136,33 @@ impl TcpServer {
                 }
             }
 
+            let mut online_ip_registered = false;
+            if let Some(max_online_ips) = self.max_online_ips {
+                let peer_ip = peer_addr.ip();
+                let mut online_ips = self.online_ips.lock().expect("online_ips lock poisoned");
+                match online_ips.get_mut(&peer_ip) {
+                    Some(count) => {
+                        *count += 1;
+                        online_ip_registered = true;
+                    }
+                    None => {
+                        if online_ips.len() >= max_online_ips {
+                            drop(online_ips);
+                            if self.max_connections.is_some() {
+                                self.conn_count.fetch_sub(1, Ordering::Relaxed);
+                            }
+                            debug!(
+                                "max online IPs ({}) reached, rejecting new IP {}",
+                                max_online_ips, peer_ip
+                            );
+                            continue;
+                        }
+                        online_ips.insert(peer_ip, 1);
+                        online_ip_registered = true;
+                    }
+                }
+            }
+
             let client = TcpServerClient {
                 context: self.context.clone(),
                 method: self.svr_cfg.method(),
@@ -121,10 +171,13 @@ impl TcpServer {
                 timeout: self.svr_cfg.timeout(),
             };
 
-            let count_guard = self.max_connections.map(|_| ConnectionCountGuard(self.conn_count.clone()));
+            let guard = ConnectionGuard {
+                conn_count: self.max_connections.map(|_| self.conn_count.clone()),
+                online_ip: online_ip_registered.then(|| (self.online_ips.clone(), peer_addr.ip())),
+            };
 
             tokio::spawn(async move {
-                let _count_guard = count_guard;
+                let _guard = guard;
                 if let Err(err) = client.serve().await {
                     debug!("tcp server stream aborted with error: {}", err);
                 }

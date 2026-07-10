@@ -739,6 +739,11 @@ Example configuration:
             // Limits how many UDP associations this node will keep.
             // Overrides the global "udp_max_associations" for this node only.
             "udp_max_associations": 100,
+            // OPTIONAL. SERVER only.
+            // Limits how many distinct client IPs may hold TCP connections to this node at the same time.
+            // A client IP that already has an open connection doesn't count as a new one.
+            // New connections from a brand-new IP are rejected once this limit is reached. Unlimited by default.
+            "max_online_ips": 50,
         },
         {
             // Same key as basic format "server" and "server_port"

@@ -396,6 +396,8 @@ struct SSServerExtConfig {
     tcp_max_connections: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     udp_max_associations: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_online_ips: Option<usize>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     acl: Option<String>,
@@ -1265,6 +1267,8 @@ pub struct ServerInstanceConfig {
     pub tcp_max_connections: Option<usize>,
     /// Maximum number of UDP associations this server instance will keep, overrides the global `udp_max_associations`
     pub udp_max_associations: Option<usize>,
+    /// Maximum number of distinct client IPs allowed to hold TCP connections concurrently, unlimited by default
+    pub max_online_ips: Option<usize>,
 }
 
 impl ServerInstanceConfig {
@@ -1282,6 +1286,7 @@ impl ServerInstanceConfig {
             outbound_udp_allow_fragmentation: None,
             tcp_max_connections: None,
             udp_max_associations: None,
+            max_online_ips: None,
         }
     }
 }
@@ -2214,6 +2219,10 @@ impl Config {
                     server_instance.udp_max_associations = Some(udp_max_associations);
                 }
 
+                if let Some(max_online_ips) = svr.max_online_ips {
+                    server_instance.max_online_ips = Some(max_online_ips);
+                }
+
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 if let Some(outbound_fwmark) = svr.outbound_fwmark {
                     server_instance.outbound_fwmark = Some(outbound_fwmark);
@@ -3049,6 +3058,7 @@ impl fmt::Display for Config {
                         },
                         tcp_max_connections: inst.tcp_max_connections,
                         udp_max_associations: inst.udp_max_associations,
+                        max_online_ips: inst.max_online_ips,
                         acl: inst
                             .acl
                             .as_ref()

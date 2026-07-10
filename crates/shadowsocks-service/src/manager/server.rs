@@ -394,6 +394,7 @@ impl Manager {
             outbound_udp_allow_fragmentation: None,
             tcp_max_connections: None,
             udp_max_associations: None,
+            max_online_ips: None,
         };
 
         let mut config = Config::new(ConfigType::Server);

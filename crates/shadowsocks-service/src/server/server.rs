@@ -24,6 +24,7 @@ pub struct ServerBuilder {
     udp_expiry_duration: Option<Duration>,
     udp_capacity: Option<usize>,
     tcp_max_connections: Option<usize>,
+    max_online_ips: Option<usize>,
     manager_addr: Option<ManagerAddr>,
     accept_opts: AcceptOpts,
 }
@@ -42,6 +43,7 @@ impl ServerBuilder {
             udp_expiry_duration: None,
             udp_capacity: None,
             tcp_max_connections: None,
+            max_online_ips: None,
             manager_addr: None,
             accept_opts: AcceptOpts::default(),
         }
@@ -75,6 +77,11 @@ impl ServerBuilder {
     /// Set maximum number of concurrent TCP connections to be accepted by one server
     pub fn set_tcp_max_connections(&mut self, c: usize) {
         self.tcp_max_connections = Some(c);
+    }
+
+    /// Set maximum number of distinct client IPs allowed to hold TCP connections concurrently
+    pub fn set_max_online_ips(&mut self, c: usize) {
+        self.max_online_ips = Some(c);
     }
 
     /// Set manager's address to report `stat`
@@ -135,6 +142,7 @@ impl ServerBuilder {
                 self.svr_cfg.clone(),
                 self.accept_opts.clone(),
                 self.tcp_max_connections,
+                self.max_online_ips,
             )
             .await?;
             tcp_server = Some(server);

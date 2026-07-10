@@ -153,6 +153,9 @@ pub async fn run(config: Config) -> io::Result<()> {
         if let Some(c) = inst.tcp_max_connections {
             server_builder.set_tcp_max_connections(c);
         }
+        if let Some(c) = inst.max_online_ips {
+            server_builder.set_max_online_ips(c);
+        }
         if let Some(ref m) = config.manager {
             server_builder.set_manager_addr(m.addr.clone());
         }
